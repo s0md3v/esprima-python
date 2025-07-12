@@ -70,6 +70,7 @@ class Syntax:
     MetaProperty = "MetaProperty"
     MethodDefinition = "MethodDefinition"
     FieldDefinition = "FieldDefinition"
+    PrivateIdentifier = "PrivateIdentifier"
     NewExpression = "NewExpression"
     ObjectExpression = "ObjectExpression"
     ObjectPattern = "ObjectPattern"

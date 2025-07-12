@@ -320,6 +320,12 @@ class Identifier(Node):
         self.name = name
 
 
+class PrivateIdentifier(Node):
+    def __init__(self, name):
+        self.type = Syntax.PrivateIdentifier
+        self.name = name
+
+
 class IfStatement(Node):
     def __init__(self, test, consequent, alternate):
         self.type = Syntax.IfStatement

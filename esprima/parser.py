@@ -462,7 +462,13 @@ class Parser(object):
             return False
 
         op = self.lookahead.value
-        return op in ('=', '*=', '**=', '/=', '%=', '+=', '-=', '<<=', '>>=', '>>>=', '&=', '^=', '|=')
+        operators = ['=', '*=', '**=', '/=', '%=', '+=', '-=', '<<=', '>>=', '>>>=', '&=', '^=', '|=']
+        
+        # ES2021: Logical assignment operators
+        if self.config.ecmaVersion >= 2021:
+            operators.extend(['||=', '&&=', '??='])
+            
+        return op in operators
 
     # Cover grammar support.
     #
@@ -552,6 +558,12 @@ class Parser(object):
             if (self.context.isModule or self.context.allowAwait) and self.lookahead.value == 'await':
                 self.tolerateUnexpectedToken(self.lookahead)
             expr = self.parseFunctionExpression() if self.matchAsyncFunction() else self.finalize(node, Node.Identifier(self.nextToken().value))
+
+        elif typ is Token.PrivateIdentifier:
+            # ES2021: Private identifiers are only valid in class contexts
+            # For now, we'll parse them as private identifier nodes
+            token = self.nextToken()
+            expr = self.finalize(node, Node.PrivateIdentifier(token.value))
 
         elif typ in (
             Token.NumericLiteral,
@@ -718,6 +730,10 @@ class Parser(object):
                 self.tolerateUnexpectedToken(token, Messages.StrictOctalLiteral)
             raw = self.getTokenRaw(token)
             key = self.finalize(node, Node.Literal(token.value, raw))
+
+        elif typ is Token.PrivateIdentifier:
+            # ES2021: Private identifiers 
+            key = self.finalize(node, Node.PrivateIdentifier(token.value))
 
         elif typ in (
             Token.Identifier,
@@ -1022,6 +1038,18 @@ class Parser(object):
             self.throwUnexpectedToken(token)
         return self.finalize(node, Node.Identifier(token.value))
 
+    def parsePropertyName(self):
+        """Parse property name which can be an identifier or private identifier"""
+        node = self.createNode()
+        token = self.nextToken()
+        
+        if token.type is Token.PrivateIdentifier:
+            return self.finalize(node, Node.PrivateIdentifier(token.value))
+        elif self.isIdentifierName(token):
+            return self.finalize(node, Node.Identifier(token.value))
+        else:
+            self.throwUnexpectedToken(token)
+
     def parseNewExpression(self):
         node = self.createNode()
 
@@ -1107,7 +1135,7 @@ class Parser(object):
                 self.context.isBindingElement = False
                 self.context.isAssignmentTarget = True
                 self.expect('.')
-                property = self.parseIdentifierName()
+                property = self.parsePropertyName()  # Can handle private identifiers
                 expr = self.finalize(self.startNode(startToken), Node.StaticMemberExpression(expr, property))
 
             elif self.match('('):
@@ -1175,7 +1203,7 @@ class Parser(object):
                 self.context.isBindingElement = False
                 self.context.isAssignmentTarget = True
                 self.expect('.')
-                property = self.parseIdentifierName()
+                property = self.parsePropertyName()  # Can handle private identifiers
                 expr = self.finalize(node, Node.StaticMemberExpression(expr, property))
 
             elif self.lookahead.type is Token.Template and self.lookahead.head:
@@ -2659,6 +2687,7 @@ class Parser(object):
         typ = token.type
         if typ in (
             Token.Identifier,
+            Token.PrivateIdentifier,
             Token.StringLiteral,
             Token.BooleanLiteral,
             Token.NullLiteral,
@@ -2811,6 +2840,18 @@ class Parser(object):
             computed = self.match('[')
             key = self.parseObjectPropertyKey()
             value = self.parseGeneratorMethod()
+
+        elif token.type is Token.PrivateIdentifier:
+            # ES2021: Private class fields and methods
+            kind = 'init'  # default to field
+            # key is already parsed by parseObjectPropertyKey
+            if self.match('='):
+                self.nextToken()
+                value = self.parseAssignmentExpression()
+            elif self.match('('):
+                # Private method
+                kind = 'method'
+                value = self.parsePropertyMethodFunction()
 
         if not kind and key and self.match('('):
             kind = 'method'
