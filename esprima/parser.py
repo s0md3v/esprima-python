@@ -1840,6 +1840,18 @@ class Parser(object):
 
         return self.finalize(node, Node.VariableDeclaration(declarations, 'var'))
 
+    def parseUsingDeclaration(self):
+        node = self.createNode()
+        # Consume 'using' as an identifier token
+        token = self.nextToken()
+        if token.type != Token.Identifier or token.value != 'using':
+            self.throwUnexpectedToken(token)
+        
+        declarations = self.parseBindingList('using', Params(inFor=False))
+        self.consumeSemicolon()
+        
+        return self.finalize(node, Node.VariableDeclaration(declarations, 'using'))
+
     # https://tc39.github.io/ecma262/#sec-empty-statement
 
     def parseEmptyStatement(self):
@@ -2368,7 +2380,13 @@ class Parser(object):
                 statement = self.parseExpressionStatement()
 
         elif typ is Token.Identifier:
-            statement = self.parseFunctionDeclaration() if self.matchAsyncFunction() else self.parseLabelledStatement()
+            # ES2024: Using declarations
+            if self.config.ecmaVersion >= 2024 and self.lookahead.value == 'using':
+                statement = self.parseUsingDeclaration()
+            elif self.matchAsyncFunction():
+                statement = self.parseFunctionDeclaration()
+            else:
+                statement = self.parseLabelledStatement()
 
         elif typ is Token.Keyword:
             value = self.lookahead.value
@@ -2798,9 +2816,17 @@ class Parser(object):
             computed = self.match('[')
             key = self.parseObjectPropertyKey()
             id = key
-            if id.name == 'static' and (self.qualifiedPropertyName(self.lookahead) or self.match('*')):
+            if id.name == 'static' and (self.qualifiedPropertyName(self.lookahead) or self.match('*') or self.match('{')):
                 token = self.lookahead
                 isStatic = True
+                
+                # ES2022: Static class blocks
+                if self.match('{') and self.config.ecmaVersion >= 2022:
+                    # This is a static block, not a static property
+                    kind = 'static'
+                    body = self.parseBlock()
+                    return self.finalize(node, Node.StaticBlock(body))
+                
                 computed = self.match('[')
                 if self.match('*'):
                     self.nextToken()
@@ -2938,6 +2964,11 @@ class Parser(object):
         self.context.strict = True
         self.context.isModule = True
         self.scanner.isModule = True
+        
+        # ES2022: Enable top-level await in modules
+        if self.config.ecmaVersion >= 2022:
+            self.context.allowAwait = True
+            
         node = self.createNode()
         body = self.parseDirectivePrologues()
         while self.lookahead.type is not Token.EOF:

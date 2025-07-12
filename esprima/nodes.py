@@ -326,6 +326,12 @@ class PrivateIdentifier(Node):
         self.name = name
 
 
+class StaticBlock(Node):
+    def __init__(self, body):
+        self.type = Syntax.StaticBlock
+        self.body = body
+
+
 class IfStatement(Node):
     def __init__(self, test, consequent, alternate):
         self.type = Syntax.IfStatement

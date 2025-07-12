@@ -71,6 +71,7 @@ class Syntax:
     MethodDefinition = "MethodDefinition"
     FieldDefinition = "FieldDefinition"
     PrivateIdentifier = "PrivateIdentifier"
+    StaticBlock = "StaticBlock"
     NewExpression = "NewExpression"
     ObjectExpression = "ObjectExpression"
     ObjectPattern = "ObjectPattern"

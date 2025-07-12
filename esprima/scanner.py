@@ -559,6 +559,32 @@ class Scanner(object):
             end=self.index
         )
 
+    def scanHashbang(self):
+        start = self.index
+        
+        # Consume '#!'
+        self.index += 2
+        
+        # Consume the rest of the line
+        while not self.eof():
+            ch = self.source[self.index]
+            if Character.isLineTerminator(ch):
+                break
+            self.index += 1
+        
+        # Hashbangs are treated as comments and skipped
+        # Advance past the line terminator if present
+        if not self.eof() and Character.isLineTerminator(self.source[self.index]):
+            if self.source[self.index] == '\r' and self.source[self.index + 1] == '\n':
+                self.index += 2
+            else:
+                self.index += 1
+            self.lineNumber += 1
+            self.lineStart = self.index
+        
+        # Return the next actual token
+        return self.lex()
+
     # https://tc39.github.io/ecma262/#sec-punctuators
 
     def scanPunctuator(self):
@@ -1265,6 +1291,10 @@ class Scanner(object):
             )
 
         ch = self.source[self.index]
+
+        # ES2023: Hashbang grammar - only at the very beginning of source
+        if self.index == 0 and ch == '#' and self.index + 1 < self.length and self.source[self.index + 1] == '!' and self.ecmaVersion >= 2023:
+            return self.scanHashbang()
 
         if Character.isIdentifierStart(ch):
             return self.scanIdentifier()
