@@ -49,6 +49,11 @@ def parse(code, options=None, delegate=None, **kwargs):
         options['jsx'] = True
         options['classProperties'] = True
 
+    # Auto-enable features based on ecmaVersion
+    ecma_version = options.get('ecmaVersion', 2017)
+    if ecma_version >= 2022:
+        options['classProperties'] = True  # ES2022: Public class fields
+
     commentHandler = None
 
     def proxyDelegate(node, metadata):

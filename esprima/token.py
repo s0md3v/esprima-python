@@ -35,6 +35,8 @@ class Token:
     StringLiteral = 8
     RegularExpression = 9
     Template = 10
+    BigIntLiteral = 11
+    PrivateIdentifier = 12
 
 
 TokenName = {}
@@ -48,3 +50,5 @@ TokenName[Token.Punctuator] = "Punctuator"
 TokenName[Token.StringLiteral] = "String"
 TokenName[Token.RegularExpression] = "RegularExpression"
 TokenName[Token.Template] = "Template"
+TokenName[Token.BigIntLiteral] = "BigInt"
+TokenName[Token.PrivateIdentifier] = "PrivateIdentifier"

@@ -52,13 +52,15 @@ class Params(object):
 
 
 class Config(Object):
-    def __init__(self, range=False, loc=False, source=None, tokens=False, comment=False, tolerant=False, **options):
+    def __init__(self, range=False, loc=False, source=None, tokens=False, comment=False, tolerant=False, ecmaVersion=None, **options):
         self.range = range
         self.loc = loc
         self.source = source
         self.tokens = tokens
         self.comment = comment
         self.tolerant = tolerant
+        # Default to ES2017 (ES8) for backward compatibility, max supported is ES2024
+        self.ecmaVersion = 2017 if ecmaVersion is None else min(max(ecmaVersion, 3), 2024)
         for k, v in options.items():
             setattr(self, k, v)
 
@@ -104,33 +106,34 @@ class Parser(object):
 
         self.errorHandler = ErrorHandler()
         self.errorHandler.tolerant = self.config.tolerant
-        self.scanner = Scanner(code, self.errorHandler)
+        self.scanner = Scanner(code, self.errorHandler, self.config.ecmaVersion)
         self.scanner.trackComment = self.config.comment
 
         self.operatorPrecedence = {
-            '||': 1,
-            '&&': 2,
-            '|': 3,
-            '^': 4,
-            '&': 5,
-            '==': 6,
-            '!=': 6,
-            '===': 6,
-            '!==': 6,
-            '<': 7,
-            '>': 7,
-            '<=': 7,
-            '>=': 7,
-            'instanceof': 7,
-            'in': 7,
-            '<<': 8,
-            '>>': 8,
-            '>>>': 8,
-            '+': 9,
-            '-': 9,
-            '*': 11,
-            '/': 11,
-            '%': 11,
+            '??': 1,  # ES2020: Nullish coalescing
+            '||': 2,
+            '&&': 3,
+            '|': 4,
+            '^': 5,
+            '&': 6,
+            '==': 7,
+            '!=': 7,
+            '===': 7,
+            '!==': 7,
+            '<': 8,
+            '>': 8,
+            '<=': 8,
+            '>=': 8,
+            'instanceof': 8,
+            'in': 8,
+            '<<': 9,
+            '>>': 9,
+            '>>>': 9,
+            '+': 10,
+            '-': 10,
+            '*': 12,
+            '/': 12,
+            '%': 12,
         }
 
         self.lookahead = RawToken(
@@ -203,6 +206,8 @@ class Parser(object):
                 elif typ is Token.Identifier:
                     msg = Messages.UnexpectedIdentifier
                 elif typ is Token.NumericLiteral:
+                    msg = Messages.UnexpectedNumber
+                elif typ is Token.BigIntLiteral:
                     msg = Messages.UnexpectedNumber
                 elif typ is Token.StringLiteral:
                     msg = Messages.UnexpectedString
@@ -457,7 +462,13 @@ class Parser(object):
             return False
 
         op = self.lookahead.value
-        return op in ('=', '*=', '**=', '/=', '%=', '+=', '-=', '<<=', '>>=', '>>>=', '&=', '^=', '|=')
+        operators = ['=', '*=', '**=', '/=', '%=', '+=', '-=', '<<=', '>>=', '>>>=', '&=', '^=', '|=']
+        
+        # ES2021: Logical assignment operators
+        if self.config.ecmaVersion >= 2021:
+            operators.extend(['||=', '&&=', '??='])
+            
+        return op in operators
 
     # Cover grammar support.
     #
@@ -548,8 +559,15 @@ class Parser(object):
                 self.tolerateUnexpectedToken(self.lookahead)
             expr = self.parseFunctionExpression() if self.matchAsyncFunction() else self.finalize(node, Node.Identifier(self.nextToken().value))
 
+        elif typ is Token.PrivateIdentifier:
+            # ES2021: Private identifiers are only valid in class contexts
+            # For now, we'll parse them as private identifier nodes
+            token = self.nextToken()
+            expr = self.finalize(node, Node.PrivateIdentifier(token.value))
+
         elif typ in (
             Token.NumericLiteral,
+            Token.BigIntLiteral,
             Token.StringLiteral,
         ):
             if self.context.strict and self.lookahead.octal:
@@ -706,11 +724,16 @@ class Parser(object):
         if typ in (
             Token.StringLiteral,
             Token.NumericLiteral,
+            Token.BigIntLiteral,
         ):
             if self.context.strict and token.octal:
                 self.tolerateUnexpectedToken(token, Messages.StrictOctalLiteral)
             raw = self.getTokenRaw(token)
             key = self.finalize(node, Node.Literal(token.value, raw))
+
+        elif typ is Token.PrivateIdentifier:
+            # ES2021: Private identifiers 
+            key = self.finalize(node, Node.PrivateIdentifier(token.value))
 
         elif typ in (
             Token.Identifier,
@@ -1015,6 +1038,18 @@ class Parser(object):
             self.throwUnexpectedToken(token)
         return self.finalize(node, Node.Identifier(token.value))
 
+    def parsePropertyName(self):
+        """Parse property name which can be an identifier or private identifier"""
+        node = self.createNode()
+        token = self.nextToken()
+        
+        if token.type is Token.PrivateIdentifier:
+            return self.finalize(node, Node.PrivateIdentifier(token.value))
+        elif self.isIdentifierName(token):
+            return self.finalize(node, Node.Identifier(token.value))
+        else:
+            self.throwUnexpectedToken(token)
+
     def parseNewExpression(self):
         node = self.createNode()
 
@@ -1100,7 +1135,7 @@ class Parser(object):
                 self.context.isBindingElement = False
                 self.context.isAssignmentTarget = True
                 self.expect('.')
-                property = self.parseIdentifierName()
+                property = self.parsePropertyName()  # Can handle private identifiers
                 expr = self.finalize(self.startNode(startToken), Node.StaticMemberExpression(expr, property))
 
             elif self.match('('):
@@ -1168,7 +1203,7 @@ class Parser(object):
                 self.context.isBindingElement = False
                 self.context.isAssignmentTarget = True
                 self.expect('.')
-                property = self.parseIdentifierName()
+                property = self.parsePropertyName()  # Can handle private identifiers
                 expr = self.finalize(node, Node.StaticMemberExpression(expr, property))
 
             elif self.lookahead.type is Token.Template and self.lookahead.head:
@@ -1805,6 +1840,18 @@ class Parser(object):
 
         return self.finalize(node, Node.VariableDeclaration(declarations, 'var'))
 
+    def parseUsingDeclaration(self):
+        node = self.createNode()
+        # Consume 'using' as an identifier token
+        token = self.nextToken()
+        if token.type != Token.Identifier or token.value != 'using':
+            self.throwUnexpectedToken(token)
+        
+        declarations = self.parseBindingList('using', Params(inFor=False))
+        self.consumeSemicolon()
+        
+        return self.finalize(node, Node.VariableDeclaration(declarations, 'using'))
+
     # https://tc39.github.io/ecma262/#sec-empty-statement
 
     def parseEmptyStatement(self):
@@ -1903,9 +1950,16 @@ class Parser(object):
         forIn = True
         left = None
         right = None
+        isAwait = False
 
         node = self.createNode()
         self.expectKeyword('for')
+        
+        # Check for 'await' keyword after 'for' (ES2018)
+        if self.config.ecmaVersion >= 2018 and self.context.allowAwait and self.matchContextualKeyword('await'):
+            isAwait = True
+            self.nextToken()
+        
         self.expect('(')
 
         if self.match(';'):
@@ -1921,6 +1975,8 @@ class Parser(object):
                 self.context.allowIn = previousAllowIn
 
                 if len(declarations) == 1 and self.matchKeyword('in'):
+                    if isAwait:
+                        self.throwError('for-await can only be used with for-of loops, not for-in')
                     decl = declarations[0]
                     if decl.init and (decl.id.type is Syntax.ArrayPattern or decl.id.type is Syntax.ObjectPattern or self.context.strict):
                         self.tolerateError(Messages.ForInOfLoopInitializer, 'for-in')
@@ -1956,6 +2012,8 @@ class Parser(object):
                     self.context.allowIn = previousAllowIn
 
                     if len(declarations) == 1 and declarations[0].init is None and self.matchKeyword('in'):
+                        if isAwait:
+                            self.throwError('for-await can only be used with for-of loops, not for-in')
                         init = self.finalize(init, Node.VariableDeclaration(declarations, kind))
                         self.nextToken()
                         left = init
@@ -1979,6 +2037,8 @@ class Parser(object):
                 self.context.allowIn = previousAllowIn
 
                 if self.matchKeyword('in'):
+                    if isAwait:
+                        self.throwError('for-await can only be used with for-of loops, not for-in')
                     if not self.context.isAssignmentTarget or init.type is Syntax.AssignmentExpression:
                         self.tolerateError(Messages.InvalidLHSInForIn)
 
@@ -2029,6 +2089,12 @@ class Parser(object):
 
         if forIn:
             return self.finalize(node, Node.ForInStatement(left, right, body))
+
+        # for-await is only valid with for-of loops
+        if isAwait:
+            if forIn:
+                self.throwError('for-await is only valid with for-of loops')
+            return self.finalize(node, Node.ForAwaitStatement(left, right, body))
 
         return self.finalize(node, Node.ForOfStatement(left, right, body))
 
@@ -2225,24 +2291,39 @@ class Parser(object):
 
         self.expectKeyword('catch')
 
-        self.expect('(')
-        if self.match(')'):
-            self.throwUnexpectedToken(self.lookahead)
+        param = None
+        
+        # ES2019: Optional catch binding
+        if self.match('('):
+            self.expect('(')
+            if self.match(')'):
+                # ES2019: catch without binding parameter
+                if self.config.ecmaVersion >= 2019:
+                    param = None
+                else:
+                    self.throwUnexpectedToken(self.lookahead)
+            else:
+                params = []
+                param = self.parsePattern(params)
+                paramMap = {}
+                for p in params:
+                    key = '$' + p.value
+                    if key in paramMap:
+                        self.tolerateError(Messages.DuplicateBinding, p.value)
+                    paramMap[key] = True
 
-        params = []
-        param = self.parsePattern(params)
-        paramMap = {}
-        for p in params:
-            key = '$' + p.value
-            if key in paramMap:
-                self.tolerateError(Messages.DuplicateBinding, p.value)
-            paramMap[key] = True
-
-        if self.context.strict and param.type is Syntax.Identifier:
-            if self.scanner.isRestrictedWord(param.name):
-                self.tolerateError(Messages.StrictCatchVariable)
-
-        self.expect(')')
+                if self.context.strict and param.type is Syntax.Identifier:
+                    if self.scanner.isRestrictedWord(param.name):
+                        self.tolerateError(Messages.StrictCatchVariable)
+            
+            self.expect(')')
+        elif self.config.ecmaVersion >= 2019:
+            # ES2019: catch without parentheses at all
+            param = None
+        else:
+            # Pre-ES2019: catch requires parentheses and binding
+            self.expect('(')
+        
         body = self.parseBlock()
 
         return self.finalize(node, Node.CatchClause(param, body))
@@ -2280,6 +2361,7 @@ class Parser(object):
             Token.BooleanLiteral,
             Token.NullLiteral,
             Token.NumericLiteral,
+            Token.BigIntLiteral,
             Token.StringLiteral,
             Token.Template,
             Token.RegularExpression,
@@ -2298,7 +2380,13 @@ class Parser(object):
                 statement = self.parseExpressionStatement()
 
         elif typ is Token.Identifier:
-            statement = self.parseFunctionDeclaration() if self.matchAsyncFunction() else self.parseLabelledStatement()
+            # ES2024: Using declarations
+            if self.config.ecmaVersion >= 2024 and self.lookahead.value == 'using':
+                statement = self.parseUsingDeclaration()
+            elif self.matchAsyncFunction():
+                statement = self.parseFunctionDeclaration()
+            else:
+                statement = self.parseLabelledStatement()
 
         elif typ is Token.Keyword:
             value = self.lookahead.value
@@ -2617,10 +2705,12 @@ class Parser(object):
         typ = token.type
         if typ in (
             Token.Identifier,
+            Token.PrivateIdentifier,
             Token.StringLiteral,
             Token.BooleanLiteral,
             Token.NullLiteral,
             Token.NumericLiteral,
+            Token.BigIntLiteral,
             Token.Keyword,
         ):
             return True
@@ -2726,9 +2816,17 @@ class Parser(object):
             computed = self.match('[')
             key = self.parseObjectPropertyKey()
             id = key
-            if id.name == 'static' and (self.qualifiedPropertyName(self.lookahead) or self.match('*')):
+            if id.name == 'static' and (self.qualifiedPropertyName(self.lookahead) or self.match('*') or self.match('{')):
                 token = self.lookahead
                 isStatic = True
+                
+                # ES2022: Static class blocks
+                if self.match('{') and self.config.ecmaVersion >= 2022:
+                    # This is a static block, not a static property
+                    kind = 'static'
+                    body = self.parseBlock()
+                    return self.finalize(node, Node.StaticBlock(body))
+                
                 computed = self.match('[')
                 if self.match('*'):
                     self.nextToken()
@@ -2768,6 +2866,18 @@ class Parser(object):
             computed = self.match('[')
             key = self.parseObjectPropertyKey()
             value = self.parseGeneratorMethod()
+
+        elif token.type is Token.PrivateIdentifier:
+            # ES2021: Private class fields and methods
+            kind = 'init'  # default to field
+            # key is already parsed by parseObjectPropertyKey
+            if self.match('='):
+                self.nextToken()
+                value = self.parseAssignmentExpression()
+            elif self.match('('):
+                # Private method
+                kind = 'method'
+                value = self.parsePropertyMethodFunction()
 
         if not kind and key and self.match('('):
             kind = 'method'
@@ -2854,6 +2964,11 @@ class Parser(object):
         self.context.strict = True
         self.context.isModule = True
         self.scanner.isModule = True
+        
+        # ES2022: Enable top-level await in modules
+        if self.config.ecmaVersion >= 2022:
+            self.context.allowAwait = True
+            
         node = self.createNode()
         body = self.parseDirectivePrologues()
         while self.lookahead.type is not Token.EOF:

@@ -275,6 +275,14 @@ class ForOfStatement(Node):
         self.body = body
 
 
+class ForAwaitStatement(Node):
+    def __init__(self, left, right, body):
+        self.type = Syntax.ForAwaitStatement
+        self.left = left
+        self.right = right
+        self.body = body
+
+
 class ForStatement(Node):
     def __init__(self, init, test, update, body):
         self.type = Syntax.ForStatement
@@ -310,6 +318,18 @@ class Identifier(Node):
     def __init__(self, name):
         self.type = Syntax.Identifier
         self.name = name
+
+
+class PrivateIdentifier(Node):
+    def __init__(self, name):
+        self.type = Syntax.PrivateIdentifier
+        self.name = name
+
+
+class StaticBlock(Node):
+    def __init__(self, body):
+        self.type = Syntax.StaticBlock
+        self.body = body
 
 
 class IfStatement(Node):

@@ -16,8 +16,8 @@ maintained by `German Mendez Bravo
 Features
 ~~~~~~~~
 
--  Full support for ECMAScript 2017 (`ECMA-262 8th
-   Edition <https://www.ecma-international.org/publications-and-standards/standards/ecma-262/>`__)
+-  Full support for ECMAScript 2024 (`ECMA-262 15th
+   Edition <https://www.ecma-international.org/publications-and-standards/standards/ecma-262/>`__) including ES2018-ES2024 syntax features
 -  Sensible `syntax tree
    format <https://github.com/estree/estree/blob/master/es5.md>`__ as
    standardized by `ESTree project <https://github.com/estree/estree>`__
@@ -93,6 +93,19 @@ A simple example:
         type: "Program",
         sourceType: "script"
     }
+
+Modern syntax support (ES2018-2024):
+
+.. code:: javascript
+
+    >>> # ES2020: BigInt and nullish coalescing
+    >>> esprima.parseScript('const big = 123n; const x = a ?? b;', ecmaVersion=2020)
+    
+    >>> # ES2021: Private class fields and logical assignment
+    >>> esprima.parseScript('class C { #private = 1; } a ||= b;', ecmaVersion=2021)
+    
+    >>> # ES2022: Top-level await (in modules)
+    >>> esprima.parseModule('await import("module");', ecmaVersion=2022)
 
 For more information, please read the `complete
 documentation <https://esprima.org/doc/>`__.
