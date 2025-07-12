@@ -69,7 +69,7 @@ class Comment(Object):
 
 
 class RawToken(Object):
-    def __init__(self, type=None, value=None, pattern=None, flags=None, regex=None, octal=None, cooked=None, head=None, tail=None, lineNumber=None, lineStart=None, start=None, end=None):
+    def __init__(self, type=None, value=None, pattern=None, flags=None, regex=None, octal=None, cooked=None, head=None, tail=None, lineNumber=None, lineStart=None, start=None, end=None, raw=None):
         self.type = type
         self.value = value
         self.pattern = pattern
@@ -83,6 +83,7 @@ class RawToken(Object):
         self.lineStart = lineStart
         self.start = start
         self.end = end
+        self.raw = raw
 
 
 class ScannerState(Object):
@@ -99,11 +100,12 @@ class Octal(object):
 
 
 class Scanner(object):
-    def __init__(self, code, handler):
+    def __init__(self, code, handler, ecmaVersion=2017):
         self.source = unicode(code) + '\x00'
         self.errorHandler = handler
         self.trackComment = False
         self.isModule = False
+        self.ecmaVersion = ecmaVersion
 
         self.length = len(code)
         self.index = 0
@@ -570,10 +572,22 @@ class Scanner(object):
             '[',
             ']',
             ':',
-            '?',
             '~',
         ):
             self.index += 1
+
+        elif str == '?':
+            self.index += 1
+            # Check for nullish coalescing operator (??) - ES2020
+            if self.source[self.index] == '?' and self.ecmaVersion >= 2020:
+                self.index += 1
+                str = '??'
+            # Check for optional chaining operator (?.) - ES2020
+            elif self.source[self.index] == '.' and self.ecmaVersion >= 2020:
+                # Only if not followed by a digit (to avoid confusion with ?.123)
+                if not Character.isDecimalDigit(self.source[self.index + 1]):
+                    self.index += 1
+                    str = '?.'
 
         else:
             # 4-character punctuator.
@@ -782,6 +796,31 @@ class Scanner(object):
 
             else:
                 self.throwUnexpectedToken()
+
+        # Check for BigInt literal (ES2020)
+        if self.source[self.index] == 'n':
+            # BigInt literals cannot have decimals or exponents
+            if '.' in num or 'e' in num.lower():
+                self.throwUnexpectedToken()
+            
+            # Only check for ES2020+ support
+            if self.ecmaVersion >= 2020:
+                self.index += 1  # consume 'n'
+                # BigInt value: convert string to int for storage
+                try:
+                    bigint_value = int(num)
+                except ValueError:
+                    self.throwUnexpectedToken()
+                
+                return RawToken(
+                    type=Token.BigIntLiteral,
+                    value=bigint_value,
+                    raw=num + 'n',
+                    lineNumber=self.lineNumber,
+                    lineStart=self.lineStart,
+                    start=start,
+                    end=self.index
+                )
 
         if Character.isIdentifierStart(self.source[self.index]):
             self.throwUnexpectedToken()

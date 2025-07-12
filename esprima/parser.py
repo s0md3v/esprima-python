@@ -52,13 +52,15 @@ class Params(object):
 
 
 class Config(Object):
-    def __init__(self, range=False, loc=False, source=None, tokens=False, comment=False, tolerant=False, **options):
+    def __init__(self, range=False, loc=False, source=None, tokens=False, comment=False, tolerant=False, ecmaVersion=None, **options):
         self.range = range
         self.loc = loc
         self.source = source
         self.tokens = tokens
         self.comment = comment
         self.tolerant = tolerant
+        # Default to ES2017 (ES8) for backward compatibility, max supported is ES2024
+        self.ecmaVersion = 2017 if ecmaVersion is None else min(max(ecmaVersion, 3), 2024)
         for k, v in options.items():
             setattr(self, k, v)
 
@@ -104,33 +106,34 @@ class Parser(object):
 
         self.errorHandler = ErrorHandler()
         self.errorHandler.tolerant = self.config.tolerant
-        self.scanner = Scanner(code, self.errorHandler)
+        self.scanner = Scanner(code, self.errorHandler, self.config.ecmaVersion)
         self.scanner.trackComment = self.config.comment
 
         self.operatorPrecedence = {
-            '||': 1,
-            '&&': 2,
-            '|': 3,
-            '^': 4,
-            '&': 5,
-            '==': 6,
-            '!=': 6,
-            '===': 6,
-            '!==': 6,
-            '<': 7,
-            '>': 7,
-            '<=': 7,
-            '>=': 7,
-            'instanceof': 7,
-            'in': 7,
-            '<<': 8,
-            '>>': 8,
-            '>>>': 8,
-            '+': 9,
-            '-': 9,
-            '*': 11,
-            '/': 11,
-            '%': 11,
+            '??': 1,  # ES2020: Nullish coalescing
+            '||': 2,
+            '&&': 3,
+            '|': 4,
+            '^': 5,
+            '&': 6,
+            '==': 7,
+            '!=': 7,
+            '===': 7,
+            '!==': 7,
+            '<': 8,
+            '>': 8,
+            '<=': 8,
+            '>=': 8,
+            'instanceof': 8,
+            'in': 8,
+            '<<': 9,
+            '>>': 9,
+            '>>>': 9,
+            '+': 10,
+            '-': 10,
+            '*': 12,
+            '/': 12,
+            '%': 12,
         }
 
         self.lookahead = RawToken(
@@ -203,6 +206,8 @@ class Parser(object):
                 elif typ is Token.Identifier:
                     msg = Messages.UnexpectedIdentifier
                 elif typ is Token.NumericLiteral:
+                    msg = Messages.UnexpectedNumber
+                elif typ is Token.BigIntLiteral:
                     msg = Messages.UnexpectedNumber
                 elif typ is Token.StringLiteral:
                     msg = Messages.UnexpectedString
@@ -550,6 +555,7 @@ class Parser(object):
 
         elif typ in (
             Token.NumericLiteral,
+            Token.BigIntLiteral,
             Token.StringLiteral,
         ):
             if self.context.strict and self.lookahead.octal:
@@ -706,6 +712,7 @@ class Parser(object):
         if typ in (
             Token.StringLiteral,
             Token.NumericLiteral,
+            Token.BigIntLiteral,
         ):
             if self.context.strict and token.octal:
                 self.tolerateUnexpectedToken(token, Messages.StrictOctalLiteral)
@@ -1903,9 +1910,16 @@ class Parser(object):
         forIn = True
         left = None
         right = None
+        isAwait = False
 
         node = self.createNode()
         self.expectKeyword('for')
+        
+        # Check for 'await' keyword after 'for' (ES2018)
+        if self.config.ecmaVersion >= 2018 and self.context.allowAwait and self.matchContextualKeyword('await'):
+            isAwait = True
+            self.nextToken()
+        
         self.expect('(')
 
         if self.match(';'):
@@ -1921,6 +1935,8 @@ class Parser(object):
                 self.context.allowIn = previousAllowIn
 
                 if len(declarations) == 1 and self.matchKeyword('in'):
+                    if isAwait:
+                        self.throwError('for-await can only be used with for-of loops, not for-in')
                     decl = declarations[0]
                     if decl.init and (decl.id.type is Syntax.ArrayPattern or decl.id.type is Syntax.ObjectPattern or self.context.strict):
                         self.tolerateError(Messages.ForInOfLoopInitializer, 'for-in')
@@ -1956,6 +1972,8 @@ class Parser(object):
                     self.context.allowIn = previousAllowIn
 
                     if len(declarations) == 1 and declarations[0].init is None and self.matchKeyword('in'):
+                        if isAwait:
+                            self.throwError('for-await can only be used with for-of loops, not for-in')
                         init = self.finalize(init, Node.VariableDeclaration(declarations, kind))
                         self.nextToken()
                         left = init
@@ -1979,6 +1997,8 @@ class Parser(object):
                 self.context.allowIn = previousAllowIn
 
                 if self.matchKeyword('in'):
+                    if isAwait:
+                        self.throwError('for-await can only be used with for-of loops, not for-in')
                     if not self.context.isAssignmentTarget or init.type is Syntax.AssignmentExpression:
                         self.tolerateError(Messages.InvalidLHSInForIn)
 
@@ -2029,6 +2049,12 @@ class Parser(object):
 
         if forIn:
             return self.finalize(node, Node.ForInStatement(left, right, body))
+
+        # for-await is only valid with for-of loops
+        if isAwait:
+            if forIn:
+                self.throwError('for-await is only valid with for-of loops')
+            return self.finalize(node, Node.ForAwaitStatement(left, right, body))
 
         return self.finalize(node, Node.ForOfStatement(left, right, body))
 
@@ -2225,24 +2251,39 @@ class Parser(object):
 
         self.expectKeyword('catch')
 
-        self.expect('(')
-        if self.match(')'):
-            self.throwUnexpectedToken(self.lookahead)
+        param = None
+        
+        # ES2019: Optional catch binding
+        if self.match('('):
+            self.expect('(')
+            if self.match(')'):
+                # ES2019: catch without binding parameter
+                if self.config.ecmaVersion >= 2019:
+                    param = None
+                else:
+                    self.throwUnexpectedToken(self.lookahead)
+            else:
+                params = []
+                param = self.parsePattern(params)
+                paramMap = {}
+                for p in params:
+                    key = '$' + p.value
+                    if key in paramMap:
+                        self.tolerateError(Messages.DuplicateBinding, p.value)
+                    paramMap[key] = True
 
-        params = []
-        param = self.parsePattern(params)
-        paramMap = {}
-        for p in params:
-            key = '$' + p.value
-            if key in paramMap:
-                self.tolerateError(Messages.DuplicateBinding, p.value)
-            paramMap[key] = True
-
-        if self.context.strict and param.type is Syntax.Identifier:
-            if self.scanner.isRestrictedWord(param.name):
-                self.tolerateError(Messages.StrictCatchVariable)
-
-        self.expect(')')
+                if self.context.strict and param.type is Syntax.Identifier:
+                    if self.scanner.isRestrictedWord(param.name):
+                        self.tolerateError(Messages.StrictCatchVariable)
+            
+            self.expect(')')
+        elif self.config.ecmaVersion >= 2019:
+            # ES2019: catch without parentheses at all
+            param = None
+        else:
+            # Pre-ES2019: catch requires parentheses and binding
+            self.expect('(')
+        
         body = self.parseBlock()
 
         return self.finalize(node, Node.CatchClause(param, body))
@@ -2280,6 +2321,7 @@ class Parser(object):
             Token.BooleanLiteral,
             Token.NullLiteral,
             Token.NumericLiteral,
+            Token.BigIntLiteral,
             Token.StringLiteral,
             Token.Template,
             Token.RegularExpression,
@@ -2621,6 +2663,7 @@ class Parser(object):
             Token.BooleanLiteral,
             Token.NullLiteral,
             Token.NumericLiteral,
+            Token.BigIntLiteral,
             Token.Keyword,
         ):
             return True

@@ -53,6 +53,7 @@ class Syntax:
     ForStatement = "ForStatement"
     ForOfStatement = "ForOfStatement"
     ForInStatement = "ForInStatement"
+    ForAwaitStatement = "ForAwaitStatement"
     FunctionDeclaration = "FunctionDeclaration"
     FunctionExpression = "FunctionExpression"
     Identifier = "Identifier"

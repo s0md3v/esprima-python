@@ -275,6 +275,14 @@ class ForOfStatement(Node):
         self.body = body
 
 
+class ForAwaitStatement(Node):
+    def __init__(self, left, right, body):
+        self.type = Syntax.ForAwaitStatement
+        self.left = left
+        self.right = right
+        self.body = body
+
+
 class ForStatement(Node):
     def __init__(self, init, test, update, body):
         self.type = Syntax.ForStatement
