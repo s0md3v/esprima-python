@@ -100,7 +100,7 @@ class Octal(object):
 
 
 class Scanner(object):
-    def __init__(self, code, handler, ecmaVersion=2017):
+    def __init__(self, code, handler, ecmaVersion=2024):
         self.source = unicode(code) + '\x00'
         self.errorHandler = handler
         self.trackComment = False
@@ -625,21 +625,31 @@ class Scanner(object):
             self.index += 1
 
         elif str == '?':
-            self.index += 1
             # Check for nullish coalescing assignment operator (??=) - ES2021
-            if self.source[self.index:self.index + 2] == '?=' and self.ecmaVersion >= 2021:
-                self.index += 2
+            if (self.index + 2 < self.length and 
+                self.source[self.index + 1:self.index + 3] == '?=' and 
+                self.ecmaVersion >= 2021):
+                self.index += 3
                 str = '??='
             # Check for nullish coalescing operator (??) - ES2020
-            elif self.source[self.index] == '?' and self.ecmaVersion >= 2020:
-                self.index += 1
+            elif (self.index + 1 < self.length and 
+                  self.source[self.index + 1] == '?' and 
+                  self.ecmaVersion >= 2020):
+                self.index += 2
                 str = '??'
             # Check for optional chaining operator (?.) - ES2020
-            elif self.source[self.index] == '.' and self.ecmaVersion >= 2020:
+            elif (self.index + 1 < self.length and 
+                  self.source[self.index + 1] == '.' and 
+                  self.ecmaVersion >= 2020):
                 # Only if not followed by a digit (to avoid confusion with ?.123)
-                if not Character.isDecimalDigit(self.source[self.index + 1]):
-                    self.index += 1
+                if (self.index + 2 >= self.length or 
+                    not Character.isDecimalDigit(self.source[self.index + 2])):
+                    self.index += 2
                     str = '?.'
+                else:
+                    self.index += 1
+            else:
+                self.index += 1
 
         else:
             # 4-character punctuator.
