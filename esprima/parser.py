@@ -1138,6 +1138,25 @@ class Parser(object):
                 property = self.parsePropertyName()  # Can handle private identifiers
                 expr = self.finalize(self.startNode(startToken), Node.StaticMemberExpression(expr, property))
 
+            elif self.match('?.') and self.config.ecmaVersion >= 2020:
+                self.context.isBindingElement = False
+                self.context.isAssignmentTarget = False  # Optional chaining is not a valid assignment target
+                self.expect('?.')
+                if self.match('('):
+                    # Optional call expression: obj?.()
+                    args = self.parseArguments()
+                    expr = self.finalize(self.startNode(startToken), Node.CallExpression(expr, args, optional=True))
+                elif self.match('['):
+                    # Optional computed member expression: obj?.[prop]
+                    self.expect('[')
+                    property = self.isolateCoverGrammar(self.parseExpression)
+                    self.expect(']')
+                    expr = self.finalize(self.startNode(startToken), Node.ComputedMemberExpression(expr, property, optional=True))
+                else:
+                    # Optional static member expression: obj?.prop
+                    property = self.parsePropertyName()
+                    expr = self.finalize(self.startNode(startToken), Node.StaticMemberExpression(expr, property, optional=True))
+
             elif self.match('('):
                 asyncArrow = maybeAsync and (startToken.lineNumber == self.lookahead.lineNumber)
                 self.context.isBindingElement = False
@@ -1205,6 +1224,21 @@ class Parser(object):
                 self.expect('.')
                 property = self.parsePropertyName()  # Can handle private identifiers
                 expr = self.finalize(node, Node.StaticMemberExpression(expr, property))
+
+            elif self.match('?.') and self.config.ecmaVersion >= 2020:
+                self.context.isBindingElement = False
+                self.context.isAssignmentTarget = False  # Optional chaining is not a valid assignment target
+                self.expect('?.')
+                if self.match('['):
+                    # Optional computed member expression: obj?.[prop]
+                    self.expect('[')
+                    property = self.isolateCoverGrammar(self.parseExpression)
+                    self.expect(']')
+                    expr = self.finalize(node, Node.ComputedMemberExpression(expr, property, optional=True))
+                else:
+                    # Optional static member expression: obj?.prop
+                    property = self.parsePropertyName()
+                    expr = self.finalize(node, Node.StaticMemberExpression(expr, property, optional=True))
 
             elif self.lookahead.type is Token.Template and self.lookahead.head:
                 quasi = self.parseTemplateLiteral()
