@@ -51,6 +51,14 @@ def parse(code, options=None, delegate=None, **kwargs):
 
     # Auto-enable features based on ecmaVersion
     ecma_version = options.get('ecmaVersion', 2017)
+    # Convert string ecmaVersion to integer for comparison
+    if isinstance(ecma_version, str):
+        try:
+            ecma_version = int(ecma_version)
+        except ValueError:
+            ecma_version = 2017  # fallback to default
+    elif ecma_version is None:
+        ecma_version = 2017  # handle None case
     if ecma_version >= 2022:
         options['classProperties'] = True  # ES2022: Public class fields
 

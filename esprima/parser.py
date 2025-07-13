@@ -60,6 +60,12 @@ class Config(Object):
         self.comment = comment
         self.tolerant = tolerant
         # Default to ES2017 (ES8) for backward compatibility, max supported is ES2024
+        # Convert string ecmaVersion to integer for comparison  
+        if ecmaVersion is not None and isinstance(ecmaVersion, str):
+            try:
+                ecmaVersion = int(ecmaVersion)
+            except ValueError:
+                ecmaVersion = 2017  # fallback to default
         self.ecmaVersion = 2017 if ecmaVersion is None else min(max(ecmaVersion, 3), 2024)
         for k, v in options.items():
             setattr(self, k, v)

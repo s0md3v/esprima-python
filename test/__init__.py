@@ -196,6 +196,38 @@ class TestEsprima(unittest.TestCase):
         r = parse(script)
         self.assertIsInstance(r, Script)
 
+    def test_ecma_version_string_handling(self):
+        """Test that ecmaVersion option accepts both string and integer values."""
+        script = 'let x = 5;'
+        
+        # Test string ecmaVersion values
+        result_str_2024 = parse(script, {'ecmaVersion': '2024'})
+        self.assertIsInstance(result_str_2024, Script)
+        
+        result_str_2022 = parse(script, {'ecmaVersion': '2022'})
+        self.assertIsInstance(result_str_2022, Script)
+        
+        result_str_2020 = parse(script, {'ecmaVersion': '2020'})
+        self.assertIsInstance(result_str_2020, Script)
+        
+        # Test integer ecmaVersion values  
+        result_int_2024 = parse(script, {'ecmaVersion': 2024})
+        self.assertIsInstance(result_int_2024, Script)
+        
+        result_int_2022 = parse(script, {'ecmaVersion': 2022})
+        self.assertIsInstance(result_int_2022, Script)
+        
+        # Test edge cases
+        result_none = parse(script, {'ecmaVersion': None})
+        self.assertIsInstance(result_none, Script)
+        
+        # Test invalid string values (should fallback gracefully)
+        result_invalid = parse(script, {'ecmaVersion': 'invalid'})
+        self.assertIsInstance(result_invalid, Script)
+        
+        result_empty = parse(script, {'ecmaVersion': ''})
+        self.assertIsInstance(result_empty, Script)
+
 
 # class TestThirdParty(unittest.TestCase):
 #     pass
