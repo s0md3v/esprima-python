@@ -90,9 +90,9 @@ class AsyncArrowFunctionExpression(Node):
 
 
 class AsyncFunctionDeclaration(Node):
-    def __init__(self, id, params, body):
+    def __init__(self, id, params, body, generator=False):
         self.type = Syntax.FunctionDeclaration
-        self.generator = False
+        self.generator = generator
         self.expression = False
         self.isAsync = True
         self.id = id
@@ -101,9 +101,9 @@ class AsyncFunctionDeclaration(Node):
 
 
 class AsyncFunctionExpression(Node):
-    def __init__(self, id, params, body):
+    def __init__(self, id, params, body, generator=False):
         self.type = Syntax.FunctionExpression
-        self.generator = False
+        self.generator = generator
         self.expression = False
         self.isAsync = True
         self.id = id
