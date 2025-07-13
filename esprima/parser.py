@@ -59,8 +59,8 @@ class Config(Object):
         self.tokens = tokens
         self.comment = comment
         self.tolerant = tolerant
-        # Default to ES2017 (ES8) for backward compatibility, max supported is ES2024
-        self.ecmaVersion = 2017 if ecmaVersion is None else min(max(ecmaVersion, 3), 2024)
+        # Default to ES2024 for modern syntax support, max supported is ES2024
+        self.ecmaVersion = 2024 if ecmaVersion is None else min(max(ecmaVersion, 3), 2024)
         for k, v in options.items():
             setattr(self, k, v)
 
