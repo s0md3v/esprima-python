@@ -629,6 +629,8 @@ class Parser(object):
                     expr = self.finalize(node, Node.ThisExpression())
                 elif self.matchKeyword('class'):
                     expr = self.parseClassExpression()
+                elif self.matchImportMeta():
+                    expr = self.parseImportMeta()
                 elif self.matchImportCall():
                     expr = self.parseImportCall()
                 else:
@@ -1109,10 +1111,32 @@ class Parser(object):
 
         return match
 
+    def matchImportMeta(self):
+        match = self.matchKeyword('import')
+        if match:
+            state = self.scanner.saveState()
+            self.scanner.scanComments()
+            next = self.scanner.lex()
+            self.scanner.restoreState(state)
+            match = (next.type is Token.Punctuator) and (next.value == '.')
+
+        return match
+
     def parseImportCall(self):
         node = self.createNode()
         self.expectKeyword('import')
         return self.finalize(node, Node.Import())
+
+    def parseImportMeta(self):
+        node = self.createNode()
+        self.expectKeyword('import')
+        self.expect('.')
+        # After import., we expect 'meta'
+        if self.lookahead.type != Token.Identifier or self.lookahead.value != 'meta':
+            self.throwUnexpectedToken(self.lookahead)
+        property = self.parseIdentifierName()
+        meta = Node.Identifier('import')
+        return self.finalize(node, Node.MetaProperty(meta, property))
 
     def parseLeftHandSideExpressionAllowCall(self):
         startToken = self.lookahead
@@ -1607,7 +1631,7 @@ class Parser(object):
                     self.tolerateUnexpectedToken(self.lookahead, Messages.IllegalExportDeclaration)
                 statement = self.parseExportDeclaration()
             elif value == 'import':
-                if self.matchImportCall():
+                if self.matchImportCall() or self.matchImportMeta():
                     statement = self.parseExpressionStatement()
                 else:
                     if not self.context.isModule:
@@ -3126,9 +3150,67 @@ class Parser(object):
                 self.throwError(message, self.lookahead.value)
             self.nextToken()
             src = self.parseModuleSpecifier()
+        
+        # Parse import assertions (ES2022) or attributes (ES2023)
+        assertions = None
+        attributes = None
+        
+        if self.matchContextualKeyword('assert'):
+            # ES2022 import assertions: import ... assert { type: "json" }
+            self.nextToken()
+            assertions = self.parseImportAssertions()
+        elif self.matchKeyword('with') or self.matchContextualKeyword('with'):
+            # ES2023 import attributes: import ... with { type: "json" }
+            self.nextToken()
+            attributes = self.parseImportAttributes()
+            
         self.consumeSemicolon()
 
-        return self.finalize(node, Node.ImportDeclaration(specifiers, src))
+        return self.finalize(node, Node.ImportDeclaration(specifiers, src, assertions, attributes))
+
+    def parseImportAssertions(self):
+        # Parse { type: "json", ... }
+        return self.parseImportAttributeList()
+
+    def parseImportAttributes(self):
+        # Parse { type: "json", ... }
+        return self.parseImportAttributeList()
+
+    def parseImportAttributeList(self):
+        # Parse { key: "value", key2: "value2" }
+        attributes = []
+        
+        self.expect('{')
+        
+        while not self.match('}'):
+            if len(attributes) > 0:
+                self.expect(',')
+                if self.match('}'):
+                    break
+            
+            # Parse key
+            if self.lookahead.type == Token.Identifier:
+                key = self.parseIdentifierName()
+            elif self.lookahead.type == Token.StringLiteral:
+                key = self.parsePrimaryExpression()
+            else:
+                self.throwUnexpectedToken(self.lookahead)
+            
+            self.expect(':')
+            
+            # Parse value (must be a string literal)
+            if self.lookahead.type != Token.StringLiteral:
+                self.throwError('Import assertion/attribute value must be a string literal')
+            value = self.parsePrimaryExpression()
+            
+            # Create an object property-like structure
+            attr = Object()
+            attr.key = key
+            attr.value = value
+            attributes.append(attr)
+        
+        self.expect('}')
+        return attributes
 
     # https://tc39.github.io/ecma262/#sec-exports
 
