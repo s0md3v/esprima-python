@@ -1330,8 +1330,19 @@ class Scanner(object):
 
         # Template literals start with ` (U+0060) for template head
         # or } (U+007D) for template middle or template tail.
-        if ch == '`' or (ch == '}' and self.curlyStack and self.curlyStack[-1] == '${'):
+        # Enhanced validation for deeply nested template literals
+        if ch == '`':
             return self.scanTemplate()
+        elif ch == '}' and self.curlyStack:
+            # More robust check for template substitution end
+            # Look through the stack to find template markers
+            for i in range(len(self.curlyStack) - 1, -1, -1):
+                if self.curlyStack[i] == '${':
+                    # Found a template substitution marker
+                    return self.scanTemplate()
+                elif self.curlyStack[i] == '{':
+                    # Found a regular brace, stop looking
+                    break
 
         # ES2021: Private identifiers start with #
         if ch == '#' and self.ecmaVersion >= 2021:
