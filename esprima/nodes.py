@@ -354,10 +354,14 @@ class Import(Node):
 
 
 class ImportDeclaration(Node):
-    def __init__(self, specifiers, source):
+    def __init__(self, specifiers, source, assertions=None, attributes=None):
         self.type = Syntax.ImportDeclaration
         self.specifiers = specifiers
         self.source = source
+        if assertions is not None:
+            self.assertions = assertions
+        if attributes is not None:
+            self.attributes = attributes
 
 
 class ImportDefaultSpecifier(Node):
