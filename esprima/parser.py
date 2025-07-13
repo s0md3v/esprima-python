@@ -2585,6 +2585,10 @@ class Parser(object):
         isGenerator = False if isAsync else self.match('*')
         if isGenerator:
             self.nextToken()
+        elif isAsync and self.match('*'):
+            # Support async generator functions (ES2018)
+            isGenerator = True
+            self.nextToken()
 
         id = None
         firstRestricted = None
@@ -2630,7 +2634,7 @@ class Parser(object):
         self.context.allowYield = previousAllowYield
 
         if isAsync:
-            return self.finalize(node, Node.AsyncFunctionDeclaration(id, params, body))
+            return self.finalize(node, Node.AsyncFunctionDeclaration(id, params, body, isGenerator))
 
         return self.finalize(node, Node.FunctionDeclaration(id, params, body, isGenerator))
 
@@ -2645,6 +2649,10 @@ class Parser(object):
 
         isGenerator = False if isAsync else self.match('*')
         if isGenerator:
+            self.nextToken()
+        elif isAsync and self.match('*'):
+            # Support async generator functions (ES2018)
+            isGenerator = True
             self.nextToken()
 
         id = None
@@ -2690,7 +2698,7 @@ class Parser(object):
         self.context.allowYield = previousAllowYield
 
         if isAsync:
-            return self.finalize(node, Node.AsyncFunctionExpression(id, params, body))
+            return self.finalize(node, Node.AsyncFunctionExpression(id, params, body, isGenerator))
 
         return self.finalize(node, Node.FunctionExpression(id, params, body, isGenerator))
 
