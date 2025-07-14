@@ -42,6 +42,10 @@ def format(code):
 	# Use a context stack to handle nested structures
 	context_stack = []
 	
+	# Enhanced context management for regex character classes
+	context_type = None  # Track what type of context we are in
+	in_regex_char_class = False  # Track if we're inside [..] within a regex
+	
 	# Template literal state tracking
 	template_state = False
 	template_content = ''
@@ -93,8 +97,15 @@ def format(code):
 		# --- Normal parsing below ---
 		# Handle regex
 		if current_context == '/':
-			if char == '/' and not _is_escaped(code[:i]):
+			# Check for character class start/end within regex
+			if char == '[' and not _is_escaped(code[:i]):
+				in_regex_char_class = True
+			elif char == ']' and in_regex_char_class and not _is_escaped(code[:i]):
+				in_regex_char_class = False
+			elif char == '/' and not in_regex_char_class and not _is_escaped(code[:i]):
+				# Only end regex if we're not in a character class
 				context_stack.pop()
+				in_regex_char_class = False
 			current_line += char
 			i += 1
 			continue
@@ -140,8 +151,10 @@ def format(code):
 
 		# Check for start of template literal
 		if char == '`':
-			template_state = True
-			template_content = ''
+			# Only start template literal if not in regex character class
+			if not (current_context == '/' and in_regex_char_class):
+				template_state = True
+				template_content = ''
 			current_line += char
 			i += 1
 			continue
@@ -179,18 +192,26 @@ def format(code):
 
 		# Handle formatting
 		if char == '{':
-			current_line += char
-			formatted_code += current_line + '\n'
-			indent_level += 1
-			current_line = '\t' * indent_level
-		elif char == '}':
-			if current_line.strip():
+			# Only handle formatting braces if not in regex character class
+			if not (current_context == '/' and in_regex_char_class):
+				current_line += char
 				formatted_code += current_line + '\n'
-			indent_level = max(0, indent_level - 1)
-			current_line = '\t' * indent_level + char
-			if i + 1 < code_len and code[i + 1] not in ';}),':
-				formatted_code += current_line + '\n'
+				indent_level += 1
 				current_line = '\t' * indent_level
+			else:
+				current_line += char
+		elif char == '}':
+			# Only handle formatting braces if not in regex character class
+			if not (current_context == '/' and in_regex_char_class):
+				if current_line.strip():
+					formatted_code += current_line + '\n'
+				indent_level = max(0, indent_level - 1)
+				current_line = '\t' * indent_level + char
+				if i + 1 < code_len and code[i + 1] not in ';}),':
+					formatted_code += current_line + '\n'
+					current_line = '\t' * indent_level
+			else:
+				current_line += char
 		elif char == ';':
 			current_line += char
 			formatted_code += current_line + '\n'
