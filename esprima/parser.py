@@ -869,7 +869,29 @@ class Parser(object):
 
     def parseTemplateElement(self):
         if self.lookahead.type is not Token.Template:
-            self.throwUnexpectedToken(self.lookahead)
+            # Check if this is the coordination issue: expecting template but got punctuator }
+            if (self.lookahead.type is Token.Punctuator and 
+                self.lookahead.value == '}' and 
+                self.scanner.curlyStack and 
+                '${' in self.scanner.curlyStack):
+                # Try to fix the scanner state: ensure the curlyStack top is '${' for template scanning
+                # Find the last '${' in the stack and bring it to the top
+                try:
+                    last_template_idx = len(self.scanner.curlyStack) - 1 - self.scanner.curlyStack[::-1].index('${')
+                    # Remove the '${' and put it back on top
+                    template_marker = self.scanner.curlyStack.pop(last_template_idx)
+                    self.scanner.curlyStack.append(template_marker)
+                    
+                    # Reset scanner position to re-scan the }
+                    self.scanner.index -= 1
+                    # Get a fresh token
+                    self.lookahead = self.scanner.lex()
+                except (ValueError, IndexError):
+                    # If we can't fix the state, fall back to original error
+                    pass
+            
+            if self.lookahead.type is not Token.Template:
+                self.throwUnexpectedToken(self.lookahead)
 
         node = self.createNode()
         token = self.nextToken()
