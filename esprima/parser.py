@@ -869,7 +869,7 @@ class Parser(object):
 
     def parseTemplateElement(self):
         if self.lookahead.type is not Token.Template:
-            self.throwUnexpectedToken()
+            self.throwUnexpectedToken(self.lookahead)
 
         node = self.createNode()
         token = self.nextToken()
