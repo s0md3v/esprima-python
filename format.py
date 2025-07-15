@@ -4,6 +4,90 @@ containers = ['\'', '"']
 comment_strings = {'/*': '*/', '//': '\n'}
 
 
+def _detect_indentation(code):
+	"""
+	Detects the indentation style used in the given code.
+	Returns a tuple (indent_type, indent_size) where:
+	- indent_type is 'tab' or 'space'
+	- indent_size is the number of spaces per indentation level (or 1 for tabs)
+	"""
+	lines = code.split('\n')
+	space_indents = []
+	tab_count = 0
+	
+	for line in lines:
+		if not line.strip():  # Skip empty lines
+			continue
+			
+		# Count leading whitespace
+		leading_spaces = 0
+		leading_tabs = 0
+		for char in line:
+			if char == ' ':
+				leading_spaces += 1
+			elif char == '\t':
+				leading_tabs += 1
+			else:
+				break
+		
+		if leading_tabs > 0:
+			tab_count += 1
+		elif leading_spaces > 0:
+			space_indents.append(leading_spaces)
+	
+	# Determine indentation style
+	if tab_count > len(space_indents):
+		return ('tab', 1)
+	elif space_indents:
+		# Calculate the most common indentation size for spaces
+		# Find the GCD of all indentation levels to get the base unit
+		from math import gcd
+		from functools import reduce
+		
+		if len(space_indents) == 1:
+			return ('space', space_indents[0])
+		
+		indent_size = reduce(gcd, space_indents)
+		if indent_size == 0:
+			indent_size = 2  # Default to 2 spaces if we can't determine
+		return ('space', indent_size)
+	
+	# Default to tabs if no indentation detected
+	return ('tab', 1)
+
+
+def _normalize_line_indentation(line, detected_style):
+	"""
+	Strips existing indentation from a line and returns the cleaned line
+	and the logical indentation level.
+	"""
+	if not line.strip():
+		return '', 0
+	
+	indent_type, indent_size = detected_style
+	leading_spaces = 0
+	leading_tabs = 0
+	
+	for char in line:
+		if char == ' ':
+			leading_spaces += 1
+		elif char == '\t':
+			leading_tabs += 1
+		else:
+			break
+	
+	# Calculate logical indentation level
+	if indent_type == 'tab':
+		# If using tabs, count tabs primarily, convert spaces to tab equivalents
+		logical_level = leading_tabs + (leading_spaces // 4)  # Assume 4 spaces = 1 tab
+	else:
+		# If using spaces, count spaces primarily, convert tabs to space equivalents
+		logical_level = (leading_spaces + leading_tabs * 4) // indent_size
+	
+	# Return the line without leading whitespace and the logical level
+	return line.lstrip(), logical_level
+
+
 def _is_escaped(string):
 	"""
 	checks if given string can escape a suffix
@@ -31,7 +115,7 @@ def _if_comment_started(string, comment_strings):
 
 def format(code):
 	"""
-	finds hardcoded strings in js code and formats it
+	finds hardcoded strings in js code and formats it with formatting awareness
 	"""
 	string = container = comment_end = ''
 	state = 'look'
@@ -55,10 +139,34 @@ def format(code):
 	template_content = ''
 	brace_count = 0  # Track nested braces within ${}
 	
+	# Detect existing indentation style and formatting level
+	detected_style = _detect_indentation(code)
+	indent_type, indent_size = detected_style
+	
+	# Check if code is already reasonably formatted
+	lines = code.split('\n')
+	has_reasonable_formatting = any(line.strip() and (line.startswith('\t') or line.startswith(' ')) for line in lines[1:])
+	
 	# Variables for code formatting
 	formatted_code = ""
 	current_line = ""
 	indent_level = 0
+	
+	def _generate_indent(level):
+		"""Generate indentation string based on detected style"""
+		if indent_type == 'tab':
+			return '\t' * level
+		else:
+			return ' ' * (level * indent_size)
+	
+	def _clean_line_start():
+		"""Clean existing indentation from current_line and apply proper indentation"""
+		nonlocal current_line
+		stripped = current_line.lstrip()
+		if stripped != current_line:  # There was indentation to remove
+			current_line = _generate_indent(indent_level) + stripped
+		elif not current_line and indent_level > 0:  # Empty line, need indentation
+			current_line = _generate_indent(indent_level)
 	
 	i = 0
 	code_len = len(code)
@@ -135,7 +243,7 @@ def format(code):
 				comment = False
 				if comment_end == '\n':
 					formatted_code += current_line
-					current_line = '\t' * indent_level
+					current_line = _generate_indent(indent_level)
 				i += 1
 				continue
 			current_line += char
@@ -247,9 +355,15 @@ def format(code):
 			# Only handle formatting braces if not in regex character class
 			if not (current_context == '/' and in_regex_char_class):
 				current_line += char
-				formatted_code += current_line + '\n'
-				indent_level += 1
-				current_line = '\t' * indent_level
+				# Only add newline if not already reasonably formatted or next char isn't already a newline
+				if not has_reasonable_formatting or (i + 1 < code_len and code[i + 1] != '\n'):
+					formatted_code += current_line + '\n'
+					indent_level += 1
+					current_line = _generate_indent(indent_level)
+				else:
+					formatted_code += current_line
+					indent_level += 1
+					current_line = ""
 			else:
 				current_line += char
 		elif char == '}':
@@ -258,24 +372,40 @@ def format(code):
 				if current_line.strip():
 					formatted_code += current_line + '\n'
 				indent_level = max(0, indent_level - 1)
-				current_line = '\t' * indent_level + char
-				if i + 1 < code_len and code[i + 1] not in ';}),':
+				current_line = _generate_indent(indent_level) + char
+				if i + 1 < code_len and code[i + 1] not in ';}),\n':
 					formatted_code += current_line + '\n'
-					current_line = '\t' * indent_level
+					current_line = _generate_indent(indent_level)
 			else:
 				current_line += char
 		elif char == ';':
 			current_line += char
-			# Only handle formatting semicolons if not in regex character class
-			if not (current_context == '/' and in_regex_char_class):
-				formatted_code += current_line + '\n'
-				current_line = '\t' * indent_level
+			# Only handle formatting semicolons if not in regex character class and not inside parentheses (for loops)
+			if not (current_context == '/' and in_regex_char_class) and not paren_stack:
+				# Only add newline if not already reasonably formatted or next char isn't already a newline
+				if not has_reasonable_formatting or (i + 1 < code_len and code[i + 1] != '\n'):
+					formatted_code += current_line + '\n'
+					current_line = _generate_indent(indent_level)
+				else:
+					formatted_code += current_line
+					current_line = ""
 		elif char == '\n':
 			if current_line.strip():
 				formatted_code += current_line + '\n'
-			current_line = '\t' * indent_level
+			else:
+				formatted_code += '\n'
+			current_line = ""  # Start fresh, will add indentation when needed
 		else:
-			current_line += char
+			# If this is the first non-whitespace character on a new line, handle indentation
+			if not current_line and char not in ' \t':
+				current_line = _generate_indent(indent_level) + char
+			elif not current_line and char in ' \t':
+				# Skip existing indentation at the start of a line
+				pass  # Don't add it to current_line
+			else:
+				# Add the character if we're continuing a line or if it's meaningful whitespace
+				if current_line or char not in ' \t':
+					current_line += char
 		i += 1
 	
 	# Add any remaining content
