@@ -42,6 +42,14 @@ def format(code):
 	# Use a context stack to handle nested structures
 	context_stack = []
 	
+	# Enhanced context management for regex character classes
+	context_type = None  # Track what type of context we are in
+	in_regex_char_class = False  # Track if we're inside [..] within a regex
+	
+	# Enhanced state tracking for better regex vs division detection
+	last_meaningful_token = None  # Track the last meaningful token we encountered
+	paren_stack = []  # Track parentheses to understand if we're in control structures
+	
 	# Template literal state tracking
 	template_state = False
 	template_content = ''
@@ -93,8 +101,15 @@ def format(code):
 		# --- Normal parsing below ---
 		# Handle regex
 		if current_context == '/':
-			if char == '/' and not _is_escaped(code[:i]):
+			# Check for character class start/end within regex
+			if char == '[' and not _is_escaped(code[:i]):
+				in_regex_char_class = True
+			elif char == ']' and in_regex_char_class and not _is_escaped(code[:i]):
+				in_regex_char_class = False
+			elif char == '/' and not in_regex_char_class and not _is_escaped(code[:i]):
+				# Only end regex if we're not in a character class
 				context_stack.pop()
+				in_regex_char_class = False
 			current_line += char
 			i += 1
 			continue
@@ -140,30 +155,80 @@ def format(code):
 
 		# Check for start of template literal
 		if char == '`':
-			template_state = True
-			template_content = ''
+			# Only start template literal if not in regex character class
+			if not (current_context == '/' and in_regex_char_class):
+				template_state = True
+				template_content = ''
 			current_line += char
 			i += 1
 			continue
 
+		# Track parentheses for control structure detection
+		if char == '(':
+			paren_stack.append(i)
+		elif char == ')' and paren_stack:
+			paren_stack.pop()
+
 		# Check for start of regex
 		if char == '/':
+			is_regex = False
+			
 			if i > 0:
+				# Get the last non-space character
 				prev_char = code[i - 1]
 				last_non_space_char = prev_char
+				last_non_space_pos = i - 1
+				
 				if prev_char.isspace():
 					for j in range(i-1, -1, -1):
 						if not code[j].isspace():
 							last_non_space_char = code[j]
+							last_non_space_pos = j
 							break
-				if last_non_space_char in ('=', '(', '[', '{', ',', ':', '?', '>', '+', '-', '*', '/', '|', '&', '!', ';') or \
-				   code[i-6:i] == 'return' or code[i-7:i] == 'return ' or \
-				   code[i-5:i] == 'throw' or code[i-6:i] == 'throw ':
-					context_stack.append('/')
-					current_line += char
-					i += 1
-					continue
-			else: # Regex at start of file
+				
+				# Basic regex detection: characters that typically precede regex
+				if last_non_space_char in ('=', '(', '[', '{', ',', ':', '?', '>', '+', '-', '*', '/', '|', '&', '!', ';'):
+					is_regex = True
+				
+				# Check for keywords that precede regex
+				elif (code[i-6:i] == 'return' or code[i-7:i] == 'return ' or 
+					  code[i-5:i] == 'throw' or code[i-6:i] == 'throw '):
+					is_regex = True
+				
+				# Enhanced detection: check for control structures like if(...), while(...), for(...)
+				elif last_non_space_char == ')':
+					# Look backwards to see if this ) closes a control structure
+					# We need to find the matching ( and see what precedes it
+					control_keywords = ['if', 'while', 'for', 'switch']
+					paren_count = 1
+					j = last_non_space_pos - 1
+					
+					# Find the matching opening parenthesis
+					while j >= 0 and paren_count > 0:
+						if code[j] == ')':
+							paren_count += 1
+						elif code[j] == '(':
+							paren_count -= 1
+						j -= 1
+					
+					if paren_count == 0:  # Found matching (
+						# Look for control keywords before the (
+						keyword_start = j + 1
+						while keyword_start > 0 and code[keyword_start - 1].isspace():
+							keyword_start -= 1
+						
+						for keyword in control_keywords:
+							keyword_len = len(keyword)
+							if (keyword_start >= keyword_len and 
+								code[keyword_start - keyword_len:keyword_start] == keyword and
+								(keyword_start == keyword_len or not code[keyword_start - keyword_len - 1].isalnum())):
+								is_regex = True
+								break
+			else:
+				# Regex at start of file
+				is_regex = True
+			
+			if is_regex:
 				context_stack.append('/')
 				current_line += char
 				i += 1
@@ -179,22 +244,32 @@ def format(code):
 
 		# Handle formatting
 		if char == '{':
-			current_line += char
-			formatted_code += current_line + '\n'
-			indent_level += 1
-			current_line = '\t' * indent_level
-		elif char == '}':
-			if current_line.strip():
+			# Only handle formatting braces if not in regex character class
+			if not (current_context == '/' and in_regex_char_class):
+				current_line += char
 				formatted_code += current_line + '\n'
-			indent_level = max(0, indent_level - 1)
-			current_line = '\t' * indent_level + char
-			if i + 1 < code_len and code[i + 1] not in ';}),':
-				formatted_code += current_line + '\n'
+				indent_level += 1
 				current_line = '\t' * indent_level
+			else:
+				current_line += char
+		elif char == '}':
+			# Only handle formatting braces if not in regex character class
+			if not (current_context == '/' and in_regex_char_class):
+				if current_line.strip():
+					formatted_code += current_line + '\n'
+				indent_level = max(0, indent_level - 1)
+				current_line = '\t' * indent_level + char
+				if i + 1 < code_len and code[i + 1] not in ';}),':
+					formatted_code += current_line + '\n'
+					current_line = '\t' * indent_level
+			else:
+				current_line += char
 		elif char == ';':
 			current_line += char
-			formatted_code += current_line + '\n'
-			current_line = '\t' * indent_level
+			# Only handle formatting semicolons if not in regex character class
+			if not (current_context == '/' and in_regex_char_class):
+				formatted_code += current_line + '\n'
+				current_line = '\t' * indent_level
 		elif char == '\n':
 			if current_line.strip():
 				formatted_code += current_line + '\n'
