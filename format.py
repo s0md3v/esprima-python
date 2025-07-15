@@ -169,7 +169,7 @@ def format(code):
 						if not code[j].isspace():
 							last_non_space_char = code[j]
 							break
-				if last_non_space_char in ('=', '(', '[', '{', ',', ':', '?', '>', '+', '-', '*', '/', '|', '&', '!', ';') or \
+				if last_non_space_char in ('=', '(', '[', '{', ',', ':', '?', '>', '+', '-', '*', '/', '|', '&', '!', ';', ')') or \
 				   code[i-6:i] == 'return' or code[i-7:i] == 'return ' or \
 				   code[i-5:i] == 'throw' or code[i-6:i] == 'throw ':
 					context_stack.append('/')
@@ -214,8 +214,10 @@ def format(code):
 				current_line += char
 		elif char == ';':
 			current_line += char
-			formatted_code += current_line + '\n'
-			current_line = '\t' * indent_level
+			# Only handle formatting semicolons if not in regex character class
+			if not (current_context == '/' and in_regex_char_class):
+				formatted_code += current_line + '\n'
+				current_line = '\t' * indent_level
 		elif char == '\n':
 			if current_line.strip():
 				formatted_code += current_line + '\n'
