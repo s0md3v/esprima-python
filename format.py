@@ -132,8 +132,7 @@ def tokenize(code):
 		elif current_context in ('"', "'"):
 			if char == current_context and not _is_escaped(code[:i]):
 				context_stack.pop()
-				if string:
-					current_strings.append(string)
+				current_strings.append(string)  # Always add string, even if empty
 				string = ''
 			else:
 				string += char
