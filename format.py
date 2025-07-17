@@ -1,5 +1,92 @@
+#from joos.core.utils import is_url
+
 containers = ['\'', '"']
 comment_strings = {'/*': '*/', '//': '\n'}
+
+
+def _detect_indentation(code):
+	"""
+	Detects the indentation style used in the given code.
+	Returns a tuple (indent_type, indent_size) where:
+	- indent_type is 'tab' or 'space'
+	- indent_size is the number of spaces per indentation level (or 1 for tabs)
+	"""
+	lines = code.split('\n')
+	space_indents = []
+	tab_count = 0
+	
+	for line in lines:
+		if not line.strip():  # Skip empty lines
+			continue
+			
+		# Count leading whitespace
+		leading_spaces = 0
+		leading_tabs = 0
+		for char in line:
+			if char == ' ':
+				leading_spaces += 1
+			elif char == '\t':
+				leading_tabs += 1
+			else:
+				break
+		
+		if leading_tabs > 0:
+			tab_count += 1
+		elif leading_spaces > 0:
+			space_indents.append(leading_spaces)
+	
+	# Determine indentation style
+	if tab_count > len(space_indents):
+		return ('tab', 1)
+	elif space_indents:
+		# Calculate the most common indentation size for spaces
+		# Find the GCD of all indentation levels to get the base unit
+		from math import gcd
+		from functools import reduce
+		
+		if len(space_indents) == 1:
+			return ('space', space_indents[0])
+		
+		indent_size = reduce(gcd, space_indents)
+		if indent_size == 0:
+			indent_size = 2  # Default to 2 spaces if we can't determine
+		return ('space', indent_size)
+	
+	# Default to tabs if no indentation detected
+	return ('tab', 1)
+
+
+def _normalize_line_indentation(line, detected_style):
+	"""
+	Strips existing indentation from a line and returns the cleaned line
+	and the logical indentation level.
+	"""
+	if not line.strip():
+		return '', 0
+	
+	indent_type, indent_size = detected_style
+	leading_spaces = 0
+	leading_tabs = 0
+	
+	for char in line:
+		if char == ' ':
+			leading_spaces += 1
+		elif char == '\t':
+			leading_tabs += 1
+		else:
+			break
+	
+	# Calculate logical indentation level
+	if indent_type == 'tab':
+		# If using tabs, count tabs primarily, convert spaces to tab equivalents
+		logical_level = leading_tabs + (leading_spaces // 4)  # Assume 4 spaces = 1 tab
+	else:
+		# If using spaces, count spaces primarily, convert tabs to space equivalents
+		logical_level = (leading_spaces + leading_tabs * 4) // indent_size
+	
+	# Return the line without leading whitespace and the logical level
+	return line.lstrip(), logical_level
+
 
 def _is_escaped(string):
 	"""
@@ -26,25 +113,25 @@ def _if_comment_started(string, comment_strings):
 			return (comment_end, len(comment_start))
 
 
-def tokenize(code):
+def format(code):
 	"""
 	finds hardcoded strings in js code and formats it with formatting awareness
-	Returns a tuple: (strings_dict, formatted_code) where strings_dict maps strings to their line numbers
 	"""
 	string = container = comment_end = ''
 	state = 'look'
 	skip = 0
 	comment = False
-	all_strings = {}  # Dictionary mapping strings to line numbers
-	current_strings = []  # Temporary list to hold strings from current line
+	all_strings = []
 	
 	# Use a context stack to handle nested structures
 	context_stack = []
 	
 	# Enhanced context management for regex character classes
+	context_type = None  # Track what type of context we are in
 	in_regex_char_class = False  # Track if we're inside [..] within a regex
 	
 	# Enhanced state tracking for better regex vs division detection
+	last_meaningful_token = None  # Track the last meaningful token we encountered
 	paren_stack = []  # Track parentheses to understand if we're in control structures
 	
 	# Template literal state tracking
@@ -52,8 +139,9 @@ def tokenize(code):
 	template_content = ''
 	brace_count = 0  # Track nested braces within ${}
 	
-	# Line tracking
-	line_number = 1  # Start at line 1
+	# Detect existing indentation style and formatting level
+	detected_style = _detect_indentation(code)
+	indent_type, indent_size = detected_style
 	
 	# Check if code is already reasonably formatted
 	lines = code.split('\n')
@@ -64,15 +152,21 @@ def tokenize(code):
 	current_line = ""
 	indent_level = 0
 	
-	def _add_strings_to_dict():
-		"""Add strings from current_strings to all_strings with current line number"""
-		nonlocal current_strings, all_strings, line_number
-		for s in current_strings:
-			if s in all_strings:
-				all_strings[s].append(line_number)
-			else:
-				all_strings[s] = [line_number]
-		current_strings = []
+	def _generate_indent(level):
+		"""Generate indentation string based on detected style"""
+		if indent_type == 'tab':
+			return '\t' * level
+		else:
+			return ' ' * (level * indent_size)
+	
+	def _clean_line_start():
+		"""Clean existing indentation from current_line and apply proper indentation"""
+		nonlocal current_line
+		stripped = current_line.lstrip()
+		if stripped != current_line:  # There was indentation to remove
+			current_line = _generate_indent(indent_level) + stripped
+		elif not current_line and indent_level > 0:  # Empty line, need indentation
+			current_line = _generate_indent(indent_level)
 	
 	i = 0
 	code_len = len(code)
@@ -107,7 +201,7 @@ def tokenize(code):
 				# Check for end of template literal (only if not within expression)
 				elif char == '`' and brace_count == 0 and not _is_escaped(code[:i]):
 					template_state = False
-					current_strings.append(template_content[:-1])  # Exclude closing backtick
+					all_strings.append(template_content[:-1])  # Exclude closing backtick
 			
 			i += 1
 			continue  # Always continue when in template state
@@ -133,7 +227,7 @@ def tokenize(code):
 			if char == current_context and not _is_escaped(code[:i]):
 				context_stack.pop()
 				if string:
-					current_strings.append(string)
+					all_strings.append(string)
 				string = ''
 			else:
 				string += char
@@ -149,9 +243,7 @@ def tokenize(code):
 				comment = False
 				if comment_end == '\n':
 					formatted_code += current_line
-					_add_strings_to_dict()
-					line_number += 1
-					current_line = '\t' * indent_level
+					current_line = _generate_indent(indent_level)
 				i += 1
 				continue
 			current_line += char
@@ -266,13 +358,10 @@ def tokenize(code):
 				# Only add newline if not already reasonably formatted or next char isn't already a newline
 				if not has_reasonable_formatting or (i + 1 < code_len and code[i + 1] != '\n'):
 					formatted_code += current_line + '\n'
-					_add_strings_to_dict()
-					line_number += 1
 					indent_level += 1
-					current_line = '\t' * indent_level
+					current_line = _generate_indent(indent_level)
 				else:
 					formatted_code += current_line
-					_add_strings_to_dict()
 					indent_level += 1
 					current_line = ""
 			else:
@@ -282,15 +371,11 @@ def tokenize(code):
 			if not (current_context == '/' and in_regex_char_class):
 				if current_line.strip():
 					formatted_code += current_line + '\n'
-					_add_strings_to_dict()
-					line_number += 1
 				indent_level = max(0, indent_level - 1)
-				current_line = '\t' * indent_level + char
+				current_line = _generate_indent(indent_level) + char
 				if i + 1 < code_len and code[i + 1] not in ';}),\n':
 					formatted_code += current_line + '\n'
-					_add_strings_to_dict()
-					line_number += 1
-					current_line = '\t' * indent_level
+					current_line = _generate_indent(indent_level)
 			else:
 				current_line += char
 		elif char == ';':
@@ -300,25 +385,20 @@ def tokenize(code):
 				# Only add newline if not already reasonably formatted or next char isn't already a newline
 				if not has_reasonable_formatting or (i + 1 < code_len and code[i + 1] != '\n'):
 					formatted_code += current_line + '\n'
-					_add_strings_to_dict()
-					line_number += 1
-					current_line = '\t' * indent_level
+					current_line = _generate_indent(indent_level)
 				else:
 					formatted_code += current_line
-					_add_strings_to_dict()
 					current_line = ""
 		elif char == '\n':
 			if current_line.strip():
 				formatted_code += current_line + '\n'
 			else:
 				formatted_code += '\n'
-			_add_strings_to_dict()
-			line_number += 1
 			current_line = ""  # Start fresh, will add indentation when needed
 		else:
 			# If this is the first non-whitespace character on a new line, handle indentation
 			if not current_line and char not in ' \t':
-				current_line = '\t' * indent_level + char
+				current_line = _generate_indent(indent_level) + char
 			elif not current_line and char in ' \t':
 				# Skip existing indentation at the start of a line
 				pass  # Don't add it to current_line
@@ -328,9 +408,8 @@ def tokenize(code):
 					current_line += char
 		i += 1
 	
-	# Add any remaining content and strings
+	# Add any remaining content
 	if current_line.strip():
 		formatted_code += current_line
-		_add_strings_to_dict()
-	
+
 	return all_strings, formatted_code
