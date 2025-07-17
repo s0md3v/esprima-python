@@ -24,7 +24,6 @@
 from __future__ import absolute_import, unicode_literals
 
 import re
-import warnings
 
 from .objects import Object
 from .compat import xrange, unicode, uchr, uord
@@ -1189,10 +1188,7 @@ class Scanner(object):
         # uses.
         pyflags = 0 | re.M if 'm' in flags else 0 | re.I if 'i' in flags else 0
         try:
-            # Suppress FutureWarning about possible nested sets in regex patterns
-            with warnings.catch_warnings():
-                warnings.filterwarnings("ignore", message="Possible nested set", category=FutureWarning)
-                return re.compile(pattern, pyflags)
+            return re.compile(pattern, pyflags)
         except Exception:
             self.tolerateUnexpectedToken(Messages.InvalidRegExp)
 
