@@ -121,7 +121,9 @@ def format(code):
 	state = 'look'
 	skip = 0
 	comment = False
-	all_strings = []
+	all_strings = {}
+	current_strings = []
+	line_number = 0
 	
 	# Use a context stack to handle nested structures
 	context_stack = []
@@ -168,6 +170,14 @@ def format(code):
 		elif not current_line and indent_level > 0:  # Empty line, need indentation
 			current_line = _generate_indent(indent_level)
 	
+	def update_strings():
+		"""Update all_strings with current_strings and increment line_number"""
+		nonlocal line_number, current_strings, all_strings
+		line_number += 1
+		for string in current_strings:
+			all_strings[string] = line_number
+		current_strings = []
+	
 	i = 0
 	code_len = len(code)
 	while i < code_len:
@@ -201,7 +211,7 @@ def format(code):
 				# Check for end of template literal (only if not within expression)
 				elif char == '`' and brace_count == 0 and not _is_escaped(code[:i]):
 					template_state = False
-					all_strings.append(template_content[:-1])  # Exclude closing backtick
+					current_strings.append(template_content[:-1])  # Exclude closing backtick
 			
 			i += 1
 			continue  # Always continue when in template state
@@ -227,7 +237,7 @@ def format(code):
 			if char == current_context and not _is_escaped(code[:i]):
 				context_stack.pop()
 				if string:
-					all_strings.append(string)
+					current_strings.append(string)
 				string = ''
 			else:
 				string += char
@@ -243,6 +253,7 @@ def format(code):
 				comment = False
 				if comment_end == '\n':
 					formatted_code += current_line
+					update_strings()
 					current_line = _generate_indent(indent_level)
 				i += 1
 				continue
@@ -358,10 +369,12 @@ def format(code):
 				# Only add newline if not already reasonably formatted or next char isn't already a newline
 				if not has_reasonable_formatting or (i + 1 < code_len and code[i + 1] != '\n'):
 					formatted_code += current_line + '\n'
+					update_strings()
 					indent_level += 1
 					current_line = _generate_indent(indent_level)
 				else:
 					formatted_code += current_line
+					update_strings()
 					indent_level += 1
 					current_line = ""
 			else:
@@ -371,10 +384,12 @@ def format(code):
 			if not (current_context == '/' and in_regex_char_class):
 				if current_line.strip():
 					formatted_code += current_line + '\n'
+					update_strings()
 				indent_level = max(0, indent_level - 1)
 				current_line = _generate_indent(indent_level) + char
 				if i + 1 < code_len and code[i + 1] not in ';}),\n':
 					formatted_code += current_line + '\n'
+					update_strings()
 					current_line = _generate_indent(indent_level)
 			else:
 				current_line += char
@@ -385,15 +400,19 @@ def format(code):
 				# Only add newline if not already reasonably formatted or next char isn't already a newline
 				if not has_reasonable_formatting or (i + 1 < code_len and code[i + 1] != '\n'):
 					formatted_code += current_line + '\n'
+					update_strings()
 					current_line = _generate_indent(indent_level)
 				else:
 					formatted_code += current_line
+					update_strings()
 					current_line = ""
 		elif char == '\n':
 			if current_line.strip():
 				formatted_code += current_line + '\n'
+				update_strings()
 			else:
 				formatted_code += '\n'
+				update_strings()
 			current_line = ""  # Start fresh, will add indentation when needed
 		else:
 			# If this is the first non-whitespace character on a new line, handle indentation
@@ -411,5 +430,12 @@ def format(code):
 	# Add any remaining content
 	if current_line.strip():
 		formatted_code += current_line
+		update_strings()
+	
+	# Add any remaining strings from current_strings (in case no final newline)
+	if current_strings:
+		line_number += 1
+		for string in current_strings:
+			all_strings[string] = line_number
 
 	return all_strings, formatted_code
