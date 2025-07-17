@@ -151,7 +151,6 @@ def format(code):
 	formatted_code = ""
 	current_line = ""
 	indent_level = 0
-	formatted_line_number = 1  # Track current line number in formatted code
 	
 	def _generate_indent(level):
 		"""Generate indentation string based on detected style"""
@@ -202,7 +201,8 @@ def format(code):
 				# Check for end of template literal (only if not within expression)
 				elif char == '`' and brace_count == 0 and not _is_escaped(code[:i]):
 					template_state = False
-					all_strings[template_content[:-1]] = formatted_line_number  # Use current line number
+					# Store the string in the dictionary - we'll calculate line numbers at the end
+					all_strings[template_content[:-1]] = None
 			
 			i += 1
 			continue  # Always continue when in template state
@@ -228,7 +228,8 @@ def format(code):
 			if char == current_context and not _is_escaped(code[:i]):
 				context_stack.pop()
 				if string:
-					all_strings[string] = formatted_line_number  # Use current line number
+					# Store the string in the dictionary - we'll calculate line numbers at the end
+					all_strings[string] = None
 				string = ''
 			else:
 				string += char
@@ -244,7 +245,6 @@ def format(code):
 				comment = False
 				if comment_end == '\n':
 					formatted_code += current_line
-					formatted_line_number += 1
 					current_line = _generate_indent(indent_level)
 				i += 1
 				continue
@@ -360,12 +360,10 @@ def format(code):
 				# Only add newline if not already reasonably formatted or next char isn't already a newline
 				if not has_reasonable_formatting or (i + 1 < code_len and code[i + 1] != '\n'):
 					formatted_code += current_line + '\n'
-					formatted_line_number += 1
 					indent_level += 1
 					current_line = _generate_indent(indent_level)
 				else:
 					formatted_code += current_line
-					formatted_line_number += current_line.count('\n')
 					indent_level += 1
 					current_line = ""
 			else:
@@ -375,12 +373,10 @@ def format(code):
 			if not (current_context == '/' and in_regex_char_class):
 				if current_line.strip():
 					formatted_code += current_line + '\n'
-					formatted_line_number += 1
 				indent_level = max(0, indent_level - 1)
 				current_line = _generate_indent(indent_level) + char
 				if i + 1 < code_len and code[i + 1] not in ';}),\n':
 					formatted_code += current_line + '\n'
-					formatted_line_number += 1
 					current_line = _generate_indent(indent_level)
 			else:
 				current_line += char
@@ -391,19 +387,15 @@ def format(code):
 				# Only add newline if not already reasonably formatted or next char isn't already a newline
 				if not has_reasonable_formatting or (i + 1 < code_len and code[i + 1] != '\n'):
 					formatted_code += current_line + '\n'
-					formatted_line_number += 1
 					current_line = _generate_indent(indent_level)
 				else:
 					formatted_code += current_line
-					formatted_line_number += current_line.count('\n')
 					current_line = ""
 		elif char == '\n':
 			if current_line.strip():
 				formatted_code += current_line + '\n'
-				formatted_line_number += 1
 			else:
 				formatted_code += '\n'
-				formatted_line_number += 1
 			current_line = ""  # Start fresh, will add indentation when needed
 		else:
 			# If this is the first non-whitespace character on a new line, handle indentation
@@ -421,6 +413,22 @@ def format(code):
 	# Add any remaining content
 	if current_line.strip():
 		formatted_code += current_line
-		formatted_line_number += current_line.count('\n')
-
-	return all_strings, formatted_code
+	
+	# Now calculate the actual line numbers for each string
+	# Split the formatted code into lines
+	formatted_lines = formatted_code.split('\n')
+	
+	# Create a mapping of strings to their last occurrence line numbers
+	final_strings = {}
+	for string in all_strings.keys():
+		# Find the last occurrence of this string in the formatted code
+		last_line = None
+		for line_num, line in enumerate(formatted_lines, 1):
+			if f'"{string}"' in line:
+				last_line = line_num
+		
+		# If we found the string, store the line number
+		if last_line is not None:
+			final_strings[string] = last_line
+	
+	return final_strings, formatted_code
