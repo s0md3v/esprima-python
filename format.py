@@ -121,7 +121,7 @@ def format(code):
 	state = 'look'
 	skip = 0
 	comment = False
-	all_strings = []
+	all_strings = {}
 	
 	# Use a context stack to handle nested structures
 	context_stack = []
@@ -201,7 +201,8 @@ def format(code):
 				# Check for end of template literal (only if not within expression)
 				elif char == '`' and brace_count == 0 and not _is_escaped(code[:i]):
 					template_state = False
-					all_strings.append(template_content[:-1])  # Exclude closing backtick
+					# Store the string in the dictionary - we'll calculate line numbers at the end
+					all_strings[template_content[:-1]] = None
 			
 			i += 1
 			continue  # Always continue when in template state
@@ -227,7 +228,8 @@ def format(code):
 			if char == current_context and not _is_escaped(code[:i]):
 				context_stack.pop()
 				if string:
-					all_strings.append(string)
+					# Store the string in the dictionary - we'll calculate line numbers at the end
+					all_strings[string] = None
 				string = ''
 			else:
 				string += char
@@ -411,5 +413,22 @@ def format(code):
 	# Add any remaining content
 	if current_line.strip():
 		formatted_code += current_line
-
-	return all_strings, formatted_code
+	
+	# Now calculate the actual line numbers for each string
+	# Split the formatted code into lines
+	formatted_lines = formatted_code.split('\n')
+	
+	# Create a mapping of strings to their last occurrence line numbers
+	final_strings = {}
+	for string in all_strings.keys():
+		# Find the last occurrence of this string in the formatted code
+		last_line = None
+		for line_num, line in enumerate(formatted_lines, 1):
+			if f'"{string}"' in line:
+				last_line = line_num
+		
+		# If we found the string, store the line number
+		if last_line is not None:
+			final_strings[string] = last_line
+	
+	return final_strings, formatted_code
